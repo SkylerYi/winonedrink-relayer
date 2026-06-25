@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import dotenv from 'dotenv';
 import { ordersRoutes } from './routes/orders.js';
+import { marketsRoutes } from './routes/markets.js';
 
 dotenv.config();
 
@@ -30,12 +31,17 @@ fastify.register(import('@fastify/cors'), {
   credentials: true,
 });
 
-// 健康检查
+fastify.get('/', async () => ({
+  service: 'WinOneDrink Relayer',
+  status: 'ok',
+  endpoints: ['/health', '/api/markets', 'POST /api/orders'],
+}));
+
 fastify.get('/health', async () => {
   return { status: 'ok', time: new Date().toISOString() };
 });
 
-// 注册下单路由
+fastify.register(marketsRoutes);
 fastify.register(ordersRoutes);
 
 const start = async () => {

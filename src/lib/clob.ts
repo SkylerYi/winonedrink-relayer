@@ -1,4 +1,4 @@
-import { ClobClient, Side, OrderType } from '@polymarket/clob-client-v2';
+import { ClobClient, OrderType, ApiKeyCreds } from '@polymarket/clob-client-v2';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,45 +11,29 @@ if (!BUILDER_CODE) {
   console.warn('Warning: POLY_BUILDER_CODE is not set');
 }
 
-let clobClient: ClobClient | null = null;
-
-export function getClobClient(): ClobClient {
-  if (!clobClient) {
-    clobClient = new ClobClient({
-      host: CLOB_HOST,
-      chain: CHAIN_ID,
-    });
-  }
-  return clobClient;
+export function getPostingClient(creds: ApiKeyCreds): ClobClient {
+  return new ClobClient({
+    host: CLOB_HOST,
+    chain: CHAIN_ID,
+    creds,
+    builderConfig: BUILDER_CODE ? { builderCode: BUILDER_CODE } : undefined,
+  });
 }
 
-export async function placeOrder(params: {
-  tokenId: string;
-  price: number;
-  size: number;
-  side: 'BUY' | 'SELL';
+export async function postSignedOrder(params: {
+  signedOrder: Record<string, unknown>;
+  orderType: OrderType;
+  creds: ApiKeyCreds;
 }) {
-  const client = getClobClient();
+  const client = getPostingClient(params.creds);
+  const response = await client.postOrder(params.signedOrder as any, params.orderType);
+  return response;
+}
 
-  const orderArgs = {
-    tokenID: params.tokenId,
-    price: params.price,
-    size: params.size,
-    side: params.side === 'BUY' ? Side.BUY : Side.SELL,
-    builderCode: BUILDER_CODE,
-  };
-
-  const options = {
-    tickSize: '0.01' as const,
-    negRisk: false,
-  };
-
-  try {
-    const response = await client.createAndPostOrder(orderArgs, options, OrderType.GTC);
-    console.log('Order placed:', response.orderID);
-    return response;
-  } catch (error: any) {
-    console.error('Order failed:', error.message);
-    throw error;
+export function assertBuilderOnOrder(order: Record<string, unknown>) {
+  const builder = String(order.builder ?? order.builderCode ?? '');
+  if (!BUILDER_CODE) return;
+  if (builder.toLowerCase() !== BUILDER_CODE.toLowerCase()) {
+    throw new Error('Order missing correct builderCode');
   }
 }

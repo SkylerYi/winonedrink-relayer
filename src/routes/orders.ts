@@ -1,20 +1,27 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { verifyPrivyUser } from '../lib/privy.js';
-import { placeOrder } from '../lib/clob.js';
 import { OrderType } from '@polymarket/clob-client-v2';
+import { verifyPrivyUser } from '../lib/privy.js';
+import { assertBuilderOnOrder, postSignedOrder } from '../lib/clob.js';
+import { isAllowedTokenId } from '../lib/markets.js';
+import { checkRateLimit } from '../lib/rateLimit.js';
+
+const CredsSchema = z.object({
+  key: z.string(),
+  secret: z.string(),
+  passphrase: z.string(),
+});
 
 const OrderSchema = z.object({
+  signedOrder: z.record(z.unknown()),
+  orderType: z.enum(['GTC', 'FOK', 'GTD', 'FAK']).default('GTC'),
   tokenId: z.string(),
-  price: z.number().positive(),
-  size: z.number().positive(),
-  side: z.enum(['BUY', 'SELL']),
+  apiCreds: CredsSchema,
 });
 
 export async function ordersRoutes(fastify: FastifyInstance) {
   fastify.post('/api/orders', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      // 验证 Privy 用户
       const authHeader = request.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return reply.code(401).send({ error: 'Missing Authorization' });
@@ -22,22 +29,31 @@ export async function ordersRoutes(fastify: FastifyInstance) {
       const accessToken = authHeader.split(' ')[1];
       const user = await verifyPrivyUser(accessToken);
 
-      // 校验请求参数
+      if (!checkRateLimit(user.userId)) {
+        return reply.code(429).send({ error: 'Too many orders, try again later' });
+      }
+
       const body = OrderSchema.parse(request.body);
+      const orderPayload = (body.signedOrder.order ?? body.signedOrder) as Record<string, unknown>;
+      const tokenId = String(orderPayload.tokenId ?? body.tokenId);
 
-      console.log(`用户 ${user.userId} 下单: ${body.side} ${body.size} @ ${body.price}`);
+      if (!(await isAllowedTokenId(tokenId))) {
+        return reply.code(400).send({ error: 'Token not in BTC/ETH 5min whitelist' });
+      }
 
-      // 调用下单
-      const result = await placeOrder({
-        tokenId: body.tokenId,
-        price: body.price,
-        size: body.size,
-        side: body.side,
+      assertBuilderOnOrder(orderPayload);
+
+      console.log(`用户 ${user.userId} 提交订单 token=${tokenId}`);
+
+      const result = await postSignedOrder({
+        signedOrder: body.signedOrder,
+        orderType: body.orderType as OrderType,
+        creds: body.apiCreds,
       });
 
       return reply.send({
         success: true,
-        orderID: result.orderID,
+        orderID: result.orderID ?? result.id,
         status: result.status,
         userId: user.userId,
       });

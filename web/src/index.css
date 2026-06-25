@@ -1,0 +1,58 @@
+:root {
+  --bg: #0f0e14;
+  --panel: #17161f;
+  --line: #2a2836;
+  --text: #f2eff8;
+  --muted: #8d879c;
+  --brand: #9b7bff;
+  --up: #3dd68c;
+  --down: #ff6f6f;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sans: 'Plus Jakarta Sans', 'PingFang SC', sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: radial-gradient(900px 500px at 10% -10%, rgba(155,123,255,.12), transparent 60%), var(--bg);
+  color: var(--text);
+}
+
+.wrap { max-width: 720px; margin: 0 auto; padding: 0 16px 40px; }
+.topbar { border-bottom: 1px solid var(--line); background: rgba(15,14,20,.8); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
+.flex { display: flex; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.logo-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #9b7bff, #54e6d0); font-size: 18px; }
+.logo { display: flex; gap: 10px; align-items: center; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 8px 14px; font-weight: 600; cursor: pointer; font-family: var(--sans); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn-connect.on { border-color: rgba(61,214,140,.35); color: var(--up); }
+.net-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); }
+.net-dot.ok { background: var(--up); }
+.hero-line { text-align: center; font-size: 22px; font-weight: 800; margin: 22px 0 8px; }
+.sub-line { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+.mono { font-family: var(--mono); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+.c-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.c-asset { display: flex; gap: 10px; align-items: center; }
+.coin { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #111; }
+.c-name { font-weight: 700; font-size: 15px; }
+.c-stat { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pick { border: 1px solid var(--line); background: #12111a; border-radius: 14px; padding: 14px; cursor: pointer; text-align: left; color: var(--text); }
+.pick.up.active { border-color: rgba(61,214,140,.45); box-shadow: inset 0 0 0 1px rgba(61,214,140,.15); }
+.pick.down.active { border-color: rgba(255,111,111,.45); box-shadow: inset 0 0 0 1px rgba(255,111,111,.15); }
+.pick .lbl { font-size: 12px; color: var(--muted); }
+.pick .pct { font-size: 28px; font-weight: 800; font-family: var(--mono); margin-top: 4px; }
+.sheet { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: end center; z-index: 20; }
+.sheet-inner { width: min(720px, 100%); background: #14131b; border: 1px solid var(--line); border-radius: 18px 18px 0 0; padding: 18px; }
+.input { width: 100%; border: 1px solid var(--line); background: #0f0e14; color: var(--text); border-radius: 12px; padding: 12px 14px; font-size: 18px; font-family: var(--mono); }
+.row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin: 8px 0; }
+.btn-primary { width: 100%; margin-top: 12px; border: none; background: var(--brand); color: #120f1c; font-weight: 800; border-radius: 12px; padding: 14px; font-size: 16px; cursor: pointer; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1d1b27; border: 1px solid var(--line); padding: 10px 14px; border-radius: 10px; font-size: 13px; z-index: 30; max-width: 90vw; }
+.history { margin-top: 18px; }
+.history h3 { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+.h-item { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
