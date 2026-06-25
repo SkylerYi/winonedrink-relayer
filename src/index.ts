@@ -4,20 +4,29 @@ import { ordersRoutes } from './routes/orders.js';
 
 dotenv.config();
 
+const isProd = process.env.NODE_ENV === 'production';
+
 const fastify = Fastify({
-  logger: {
-    transport: {
-      target: 'pino-pretty',
-      options: { colorize: true }
-    }
-  }
+  logger: isProd
+    ? true
+    : {
+        transport: {
+          target: 'pino-pretty',
+          options: { colorize: true },
+        },
+      },
 });
 
 const PORT = Number(process.env.PORT || 3001);
 
-// CORS
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://famous-daffodil-58f46f.netlify.app',
+  ...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : []),
+];
+
 fastify.register(import('@fastify/cors'), {
-  origin: ['http://localhost:5173', 'https://your-netlify-site.netlify.app'],
+  origin: allowedOrigins,
   credentials: true,
 });
 

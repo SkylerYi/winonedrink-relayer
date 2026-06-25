@@ -1,4 +1,4 @@
-import { ClobClient, Side, OrderType, PartialCreateOrderOptions } from '@polymarket/clob-client-v2';
+import { ClobClient, Side, OrderType } from '@polymarket/clob-client-v2';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -39,8 +39,8 @@ export async function placeOrder(params: {
     builderCode: BUILDER_CODE,
   };
 
-  const options: PartialCreateOrderOptions = {
-    tickSize: '0.01',
+  const options = {
+    tickSize: '0.01' as const,
     negRisk: false,
   };
 
