@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import dotenv from 'dotenv';
 import { ordersRoutes } from './routes/orders.js';
 import { marketsRoutes } from './routes/markets.js';
+import { builderSignRoutes } from './routes/builderSign.js';
 
 dotenv.config();
 
@@ -34,7 +35,7 @@ fastify.register(import('@fastify/cors'), {
 fastify.get('/', async () => ({
   service: 'WinOneDrink Relayer',
   status: 'ok',
-  endpoints: ['/health', '/api/markets', 'POST /api/orders'],
+  endpoints: ['/health', '/api/markets', 'POST /api/orders', 'POST /api/builder/sign'],
 }));
 
 fastify.get('/health', async () => {
@@ -43,6 +44,7 @@ fastify.get('/health', async () => {
 
 fastify.register(marketsRoutes);
 fastify.register(ordersRoutes);
+fastify.register(builderSignRoutes);
 
 const start = async () => {
   try {

@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "keeper": "tsx src/keeper/redeemWatcher.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
+    "@polymarket/builder-signing-sdk": "^0.0.8",
     "@polymarket/clob-client-v2": "latest",
     "@privy-io/server-auth": "^1.0.0",
     "dotenv": "^16.4.5",

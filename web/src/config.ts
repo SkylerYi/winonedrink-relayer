@@ -4,9 +4,6 @@ export const CONFIG = {
   BUILDER_CODE: import.meta.env.VITE_POLY_BUILDER_CODE as string,
   BUILDER_TAKER_BPS: Number(import.meta.env.VITE_BUILDER_TAKER_BPS || 100),
   DEFAULT_USD: 5,
-  CLOB_HOST: 'https://clob.polymarket.com',
-  CHAIN_ID: 137 as const,
-  PUSD: '0xC011a7E12a19f7B1f670d46f03b03f3342E82dfb',
 };
 
 export const ASSETS = [

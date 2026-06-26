@@ -1,24 +1,35 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePrivy, useWallets, getAccessToken } from '@privy-io/react-auth';
-import { Contract, formatUnits } from 'ethers';
+import { useEffect, useRef, useState } from 'react';
+import { usePrivy } from '@privy-io/react-auth';
 import { ASSETS, CONFIG, type AssetKey } from './config';
-import { buildSignedBuyOrder, createAuthedClobClient, submitOrderViaBackend } from './lib/clob';
+import { useDeposit, useSafeBalance } from './hooks/wallet';
+import { useTradingSession } from './hooks/useTradingSession';
+import { placeBuyOrder } from './lib/trading';
+import { createRedeemTx } from './lib/redeem';
+import { createRelayClient } from './lib/trading';
 import { countdown, fmtUsd, loadMarkets, loadSpot, shortAddr, type MarketRow } from './lib/markets';
+import { useWallet } from './providers/WalletProvider';
 
 type PickSide = { assetKey: AssetKey; isUp: boolean };
-type HistoryItem = { asset: string; up: boolean; usd: number; price: number; ts: number; orderId?: string };
-
-const ERC20_ABI = ['function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'];
+type HistoryItem = {
+  asset: string;
+  up: boolean;
+  usd: number;
+  price: number;
+  ts: number;
+  orderId?: string;
+  conditionId?: string;
+};
 
 export default function App() {
   const { ready, authenticated, login, logout, user } = usePrivy();
-  const { wallets } = useWallets();
-  const wallet = useMemo(() => wallets.find((w) => w.walletClientType === 'privy') || wallets[0], [wallets]);
+  const { eoaAddress, ethersSigner, walletClient } = useWallet();
+  const trading = useTradingSession();
+  const { balance, refresh: refreshBalance } = useSafeBalance(trading.safeAddress);
+  const { deposit } = useDeposit(refreshBalance);
 
   const [markets, setMarkets] = useState<Record<string, MarketRow | null>>({});
   const [spot, setSpot] = useState<Record<string, { price: number; changePct: number }>>({});
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
-  const [balance, setBalance] = useState<number | null>(null);
   const [pick, setPick] = useState<PickSide | null>(null);
   const [usd, setUsd] = useState(String(CONFIG.DEFAULT_USD));
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -41,12 +52,8 @@ export default function App() {
         setSpot(s);
       }
     })();
-    const mTimer = window.setInterval(async () => {
-      setMarkets(await loadMarkets());
-    }, 30000);
-    const sTimer = window.setInterval(async () => {
-      setSpot(await loadSpot());
-    }, 10000);
+    const mTimer = window.setInterval(async () => setMarkets(await loadMarkets()), 30000);
+    const sTimer = window.setInterval(async () => setSpot(await loadSpot()), 10000);
     const cTimer = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => {
       alive = false;
@@ -56,38 +63,44 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!authenticated || !wallet) {
-      setBalance(null);
-      return;
+  async function handleSetup() {
+    if (!trading.walletReady) {
+      return showToast('钱包初始化中，请稍等 2 秒再试');
     }
-    let alive = true;
-    (async () => {
-      try {
-        await wallet.switchChain(137);
-        const provider = await wallet.getEthereumProvider();
-        const { BrowserProvider, Contract: C } = await import('ethers');
-        const bp = new BrowserProvider(provider);
-        const signer = await bp.getSigner();
-        const pusd = new C(CONFIG.PUSD, ERC20_ABI, signer);
-        const [raw, dec] = await Promise.all([pusd.balanceOf(wallet.address), pusd.decimals()]);
-        if (alive) setBalance(Number(formatUnits(raw, dec)));
-      } catch {
-        if (alive) setBalance(null);
+    try {
+      await trading.initialize();
+      showToast('交易账户已就绪，可以充值下注');
+      refreshBalance();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Builder API credentials')) {
+        showToast('后端未配置 Builder API Key，请联系管理员');
+      } else {
+        showToast(`初始化失败: ${msg}`);
       }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [authenticated, wallet]);
+    }
+  }
+
+  async function handleDeposit() {
+    if (!trading.safeAddress) return showToast('请先完成账户初始化');
+    try {
+      setBusy(true);
+      await deposit(trading.safeAddress, '25');
+      showToast('充值流程已打开，完成后余额会自动刷新');
+    } catch (e: unknown) {
+      showToast(`充值失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function placeBet() {
-    if (!pick || !wallet) return;
+    if (!pick || !trading.clobClient) return;
     const market = markets[pick.assetKey];
     const usdNum = parseFloat(usd) || 0;
     if (!market) return showToast('市场数据加载中，请稍后再试');
-    if (usdNum <= 0) return showToast('请输入金额');
-    if (!CONFIG.BACKEND_URL) return showToast('未配置 BACKEND_URL');
+    if (usdNum < 5) return showToast('Polymarket 最小下单约 $5');
+    if (balance != null && balance < usdNum) return showToast('余额不足，请先充值 USDC');
 
     const tokenId = pick.isUp ? market.tokenUp : market.tokenDown;
     const price = pick.isUp ? market.pUp : market.pDown;
@@ -95,23 +108,11 @@ export default function App() {
 
     setBusy(true);
     try {
-      const accessToken = await getAccessToken();
-      if (!accessToken) throw new Error('无法获取登录凭证，请重新登录');
-
-      const provider = await wallet.getEthereumProvider();
-      const { client, creds } = await createAuthedClobClient(provider, wallet.address);
-      const { signedOrder, price: px, size } = await buildSignedBuyOrder({
-        client,
+      const { result, price: px, size } = await placeBuyOrder({
+        client: trading.clobClient,
         tokenId,
         price,
         sizeUsd: usdNum,
-      });
-
-      const result = await submitOrderViaBackend({
-        accessToken,
-        signedOrder,
-        tokenId,
-        apiCreds: creds,
       });
 
       setHistory((prev) => [
@@ -121,14 +122,39 @@ export default function App() {
           usd: usdNum,
           price: px,
           ts: Date.now(),
-          orderId: result.orderID,
+          orderId: result.orderID || (result as any).id,
+          conditionId: market.conditionId,
         },
         ...prev,
       ]);
-      showToast(`下单成功 · 约 ${size.toFixed(2)} 份 @ ${px.toFixed(2)} · ID ${result.orderID || 'pending'}`);
+      showToast(`下单成功 · ${size.toFixed(2)} 份 @ ${px.toFixed(2)}`);
       setPick(null);
-    } catch (e: any) {
-      showToast(`失败: ${e?.message || e}`);
+      refreshBalance();
+    } catch (e: unknown) {
+      showToast(`失败: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function redeemItem(item: HistoryItem) {
+    if (!item.conditionId || !walletClient || !trading.safeAddress) return;
+    const market = markets[item.asset];
+    if (market && market.endTs > now) return showToast('市场尚未结算，请稍后再领取');
+
+    setBusy(true);
+    try {
+      const relay = createRelayClient(walletClient!);
+      const tx = createRedeemTx({
+        conditionId: item.conditionId,
+        outcomeIndex: item.up ? 0 : 1,
+      });
+      const response = await relay.execute([tx], `Redeem ${item.asset}`);
+      await response.wait();
+      showToast('领取成功，USDC 已回到账户');
+      refreshBalance();
+    } catch (e: unknown) {
+      showToast(`领取失败: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -152,12 +178,17 @@ export default function App() {
               </div>
             </div>
             {authenticated ? (
-              <button className="btn btn-connect on" onClick={logout}>
-                <span className="net-dot ok" /> {shortAddr(wallet?.address)}
-              </button>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <span className="btn btn-connect on" style={{ cursor: 'default', pointerEvents: 'none' }}>
+                  <span className="net-dot ok" /> {shortAddr(eoaAddress)}
+                </span>
+                <button className="btn btn-sm" type="button" onClick={logout}>
+                  退出
+                </button>
+              </div>
             ) : (
               <button className="btn btn-connect" onClick={login} disabled={!ready}>
-                <span className="net-dot" /> {ready ? '登录 / 注册' : '加载中…'}
+                <span className="net-dot" /> {ready ? '邮箱登录' : '加载中…'}
               </button>
             )}
           </div>
@@ -169,15 +200,57 @@ export default function App() {
         <div className="sub-line">
           {authenticated ? (
             <>
-              余额 <b className="mono">{balance == null ? '…' : fmtUsd(balance)} pUSD</b>
+              Safe 余额 <b className="mono">{balance == null ? '…' : fmtUsd(balance)} USDC</b>
               {' · '}
               {user?.email?.address || user?.google?.email || '已登录'}
-              {balance != null && balance <= 0 ? ' · 需先充值 pUSD' : ''}
             </>
           ) : (
-            '邮箱 / Google 一键登录，自动创建钱包 · 无需 App、无需助记词'
+            '邮箱一键登录 · 自动创建钱包 · 站内充值 · 无需 Polymarket.com'
           )}
+          <span className="version-tag"> · v0.3</span>
         </div>
+
+        {authenticated && !trading.ready && (
+          <div className="notice-banner">
+            登录成功！请先点下方 <b>「开通交易账户」</b>，完成后再充值 USDC 才能下注。
+          </div>
+        )}
+
+        {authenticated && (
+          <div className="session-card">
+            {!trading.ready ? (
+              <>
+                <div className="session-title">第一步：开通交易账户（约 30 秒，全程免 gas）</div>
+                <div className="session-desc">
+                  部署 Polymarket Safe · 授权 USDC · {trading.busy ? trading.stepLabel : '点击开始'}
+                </div>
+                {trading.error && <div className="session-error">{trading.error}</div>}
+                <button
+                  className="btn-primary session-btn"
+                  disabled={trading.busy || !trading.walletReady}
+                  onClick={handleSetup}
+                >
+                  {trading.busy ? trading.stepLabel : trading.walletReady ? '开通交易账户' : '钱包初始化中…'}
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center justify-between session-ready">
+                <div>
+                  <div className="session-title">✓ 交易账户就绪</div>
+                  <div className="session-desc mono">{shortAddr(trading.safeAddress)}</div>
+                </div>
+                <div className="flex" style={{ gap: 8 }}>
+                  <button className="btn" disabled={busy} onClick={handleDeposit}>
+                    充值 USDC
+                  </button>
+                  <button className="btn" disabled={busy} onClick={() => trading.reset()}>
+                    重置
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {ASSETS.map((asset) => {
           const m = markets[asset.key];
@@ -207,14 +280,24 @@ export default function App() {
               <div className="btns">
                 <button
                   className={`pick up ${pick?.assetKey === asset.key && pick.isUp ? 'active' : ''}`}
-                  onClick={() => authenticated ? setPick({ assetKey: asset.key, isUp: true }) : login()}
+                  disabled={!trading.ready}
+                  onClick={() => {
+                    if (!authenticated) return login();
+                    if (!trading.ready) return showToast('请先开通交易账户，再下注');
+                    setPick({ assetKey: asset.key, isUp: true });
+                  }}
                 >
                   <div className="lbl">看涨 Up</div>
                   <div className="pct" style={{ color: 'var(--up)' }}>{Math.round(m.pUp * 100)}¢</div>
                 </button>
                 <button
                   className={`pick down ${pick?.assetKey === asset.key && !pick.isUp ? 'active' : ''}`}
-                  onClick={() => authenticated ? setPick({ assetKey: asset.key, isUp: false }) : login()}
+                  disabled={!trading.ready}
+                  onClick={() => {
+                    if (!authenticated) return login();
+                    if (!trading.ready) return showToast('请先开通交易账户，再下注');
+                    setPick({ assetKey: asset.key, isUp: false });
+                  }}
                 >
                   <div className="lbl">看跌 Down</div>
                   <div className="pct" style={{ color: 'var(--down)' }}>{Math.round(m.pDown * 100)}¢</div>
@@ -227,12 +310,22 @@ export default function App() {
         {history.length > 0 && (
           <div className="history">
             <h3>最近下单</h3>
-            {history.slice(0, 5).map((h, i) => (
-              <div className="h-item" key={i}>
-                <span>{h.asset} {h.up ? 'Up' : 'Down'} · ${h.usd}</span>
-                <span className="mono">{h.orderId ? h.orderId.slice(0, 10) + '…' : 'ok'}</span>
-              </div>
-            ))}
+            {history.slice(0, 5).map((h, i) => {
+              const ended = markets[h.asset]?.endTs ? markets[h.asset]!.endTs <= now : false;
+              return (
+                <div className="h-item" key={i}>
+                  <span>{h.asset} {h.up ? 'Up' : 'Down'} · ${h.usd}</span>
+                  <span className="flex" style={{ gap: 8, alignItems: 'center' }}>
+                    {ended && h.conditionId && (
+                      <button className="btn btn-sm" disabled={busy} onClick={() => redeemItem(h)}>
+                        领取
+                      </button>
+                    )}
+                    <span className="mono">{h.orderId ? h.orderId.slice(0, 10) + '…' : 'ok'}</span>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -243,11 +336,11 @@ export default function App() {
             <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 12 }}>
               {pick.assetKey} {pick.isUp ? '看涨 Up' : '看跌 Down'}
             </div>
-            <input className="input" type="number" min="5" step="1" value={usd} onChange={(e) => setUsd(e.target.value)} />
+            <input className="input" type="number" min="5" step="1" value={usd} onChange={(e) => setUsd(e.target.value)} placeholder="最少 $5" />
             <div className="row"><span>当前价</span><span className="mono">{activePrice.toFixed(2)}</span></div>
             <div className="row"><span>预估份数</span><span className="mono">{estShares.toFixed(2)}</span></div>
             <div className="row"><span>平台费 (~1%)</span><span className="mono">${estFee.toFixed(2)}</span></div>
-            <button className="btn-primary" disabled={busy} onClick={placeBet}>
+            <button className="btn-primary" disabled={busy || !trading.ready} onClick={placeBet}>
               {busy ? '签名并提交中…' : `确认下注 $${usd}`}
             </button>
           </div>
