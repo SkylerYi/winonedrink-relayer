@@ -1,0 +1,12 @@
+# Railway 只构建后端根目录，忽略 web/ 前端
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"
