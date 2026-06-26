@@ -1,0 +1,9 @@
+web
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.git
+*.md
+web/dist
